@@ -1,6 +1,7 @@
 package com.aeonaxi.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
@@ -13,9 +14,12 @@ import android.os.Looper
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ViewGroup
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.ListView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -285,14 +289,72 @@ val ERASED_CITIES = listOf(
     Triple("Jakarta", 28, 106.8 to -6.2), Triple("Sydney", 29, 151.2 to -33.9)
 )
 
-private data class Blob(val lon: Double, val lat: Double, val startDay: Int, val maxR: Double, val seed: Double)
-private data class Scar(val pts: List<Pair<Double, Double>>, val startDay: Int)
+data class Blob(val lon: Double, val lat: Double, val startDay: Int, val maxR: Double, val seed: Double)
+data class Scar(val pts: List<Pair<Double, Double>>, val startDay: Int)
 
 private fun pts(vararg flat: Double): List<Pair<Double, Double>> {
     val out = ArrayList<Pair<Double, Double>>()
     var i = 0
     while (i + 1 < flat.size) { out.add(flat[i] to flat[i + 1]); i += 2 }
     return out
+}
+
+
+// --- Shared Fusion Matter field (map rendering + scarcity engine) ---------
+object FusionField {
+    val oceanBlobs = listOf(
+        Blob(-30.0, 25.0, 3, 34.0, 1.0), Blob(-150.0, 5.0, 7, 42.0, 2.0),
+        Blob(150.0, -5.0, 9, 38.0, 3.0), Blob(80.0, -15.0, 11, 34.0, 4.0),
+        Blob(0.0, 78.0, 18, 40.0, 5.0), Blob(-40.0, -45.0, 23, 40.0, 6.0),
+        Blob(-90.0, -25.0, 25, 34.0, 7.0)
+    )
+
+    val corruptedZones = listOf(
+        Blob(-95.0, 42.0, 1, 20.0, 11.0), Blob(-110.0, 35.0, 2, 15.0, 12.0),
+        Blob(-60.0, -15.0, 6, 19.0, 13.0), Blob(-45.0, -30.0, 8, 14.0, 14.0),
+        Blob(5.0, 10.0, 6, 18.0, 15.0), Blob(22.0, -12.0, 9, 17.0, 16.0),
+        Blob(28.0, -28.0, 12, 13.0, 17.0), Blob(15.0, 50.0, 10, 16.0, 18.0),
+        Blob(45.0, 55.0, 14, 20.0, 19.0), Blob(85.0, 28.0, 14, 18.0, 20.0),
+        Blob(110.0, 35.0, 17, 18.0, 21.0), Blob(135.0, 48.0, 20, 17.0, 22.0),
+        Blob(134.0, -25.0, 22, 17.0, 23.0), Blob(148.0, -32.0, 24, 12.0, 24.0),
+        Blob(-125.0, 52.0, 16, 14.0, 25.0), Blob(65.0, 68.0, 22, 22.0, 26.0),
+        Blob(-35.0, 74.0, 24, 16.0, 27.0), Blob(0.0, -78.0, 30, 30.0, 28.0),
+        Blob(-75.0, 15.0, 16, 13.0, 29.0), Blob(107.0, -6.0, 19, 12.0, 30.0)
+    )
+
+    val futureZones = listOf(
+        Blob(-77.0, 38.0, 5, 19.0, 31.0), Blob(15.0, 50.0, 12, 17.0, 32.0),
+        Blob(120.0, 32.0, 20, 18.0, 33.0)
+    )
+
+    val scars = listOf(
+        Scar(pts(-122.0, 50.0, -108.0, 44.0, -94.0, 43.0, -82.0, 39.0, -74.0, 38.0), 4),
+        Scar(pts(8.0, 6.0, 16.0, -6.0, 22.0, -18.0, 28.0, -30.0), 9),
+        Scar(pts(-72.0, -8.0, -64.0, -20.0, -66.0, -34.0, -68.0, -48.0), 13),
+        Scar(pts(-5.0, 48.0, 18.0, 50.0, 45.0, 55.0, 80.0, 58.0, 115.0, 52.0), 17),
+        Scar(pts(88.0, 24.0, 102.0, 28.0, 116.0, 33.0, 128.0, 38.0), 24),
+        Scar(pts(116.0, -24.0, 128.0, -27.0, 140.0, -32.0, 150.0, -35.0), 26)
+    )
+
+    fun growth(b: Blob, day: Int): Double {
+        if (day < b.startDay) return 0.0
+        val span = (31 - b.startDay).coerceAtLeast(1)
+        val f = ((day - b.startDay + 1).toDouble() / (span + 1)).coerceIn(0.0, 1.0)
+        return 0.22 + 0.78 * f
+    }
+
+    fun radiusDeg(b: Blob, day: Int): Double = b.maxR * growth(b, day)
+
+    fun isConsumed(lon: Double, lat: Double, day: Int): Boolean {
+        fun hit(b: Blob): Boolean {
+            val r = radiusDeg(b, day)
+            if (r <= 0.0) return false
+            val dLon = (lon - b.lon) * kotlin.math.cos(Math.toRadians(b.lat))
+            val dLat = lat - b.lat
+            return dLon * dLon + dLat * dLat <= r * r * 0.8
+        }
+        return corruptedZones.any(::hit) || futureZones.any(::hit) || oceanBlobs.any(::hit)
+    }
 }
 
 // --- The map ----------------------------------------------------------------
@@ -302,6 +364,10 @@ class FusionMapView(context: Context) : View(context) {
         set(value) { field = value.coerceIn(1, 31); invalidate() }
 
     var onPlaceTapped: ((String) -> Unit)? = null
+    var onScarcityReady: (() -> Unit)? = null
+
+    var scarcityTint: Boolean = false
+        set(value) { field = value; invalidate() }
 
     companion object {
         val LIME: Int = Color.rgb(61, 255, 26)
@@ -382,35 +448,6 @@ class FusionMapView(context: Context) : View(context) {
         Color.rgb(110, 152, 88), Color.rgb(86, 130, 70)
     )
 
-    private val oceanBlobs = listOf(
-        Blob(-30.0, 25.0, 3, 34.0, 1.0), Blob(-150.0, 5.0, 7, 42.0, 2.0),
-        Blob(150.0, -5.0, 9, 38.0, 3.0), Blob(80.0, -15.0, 11, 34.0, 4.0),
-        Blob(0.0, 78.0, 18, 40.0, 5.0), Blob(-40.0, -45.0, 23, 40.0, 6.0),
-        Blob(-90.0, -25.0, 25, 34.0, 7.0)
-    )
-    private val corruptedZones = listOf(
-        Blob(-95.0, 42.0, 1, 20.0, 11.0), Blob(-110.0, 35.0, 2, 15.0, 12.0),
-        Blob(-60.0, -15.0, 6, 19.0, 13.0), Blob(-45.0, -30.0, 8, 14.0, 14.0),
-        Blob(5.0, 10.0, 6, 18.0, 15.0), Blob(22.0, -12.0, 9, 17.0, 16.0),
-        Blob(28.0, -28.0, 12, 13.0, 17.0), Blob(15.0, 50.0, 10, 16.0, 18.0),
-        Blob(45.0, 55.0, 14, 20.0, 19.0), Blob(85.0, 28.0, 14, 18.0, 20.0),
-        Blob(110.0, 35.0, 17, 18.0, 21.0), Blob(135.0, 48.0, 20, 17.0, 22.0),
-        Blob(134.0, -25.0, 22, 17.0, 23.0), Blob(148.0, -32.0, 24, 12.0, 24.0),
-        Blob(-125.0, 52.0, 16, 14.0, 25.0), Blob(65.0, 68.0, 22, 22.0, 26.0),
-        Blob(-35.0, 74.0, 24, 16.0, 27.0), Blob(0.0, -78.0, 30, 30.0, 28.0)
-    )
-    private val futureZones = listOf(
-        Blob(-77.0, 38.0, 5, 19.0, 31.0), Blob(15.0, 50.0, 12, 17.0, 32.0),
-        Blob(120.0, 32.0, 20, 18.0, 33.0)
-    )
-    private val scars = listOf(
-        Scar(pts(-122.0, 50.0, -108.0, 44.0, -94.0, 43.0, -82.0, 39.0, -74.0, 38.0), 4),
-        Scar(pts(8.0, 6.0, 16.0, -6.0, 22.0, -18.0, 28.0, -30.0), 9),
-        Scar(pts(-72.0, -8.0, -64.0, -20.0, -66.0, -34.0, -68.0, -48.0), 13),
-        Scar(pts(-5.0, 48.0, 18.0, 50.0, 45.0, 55.0, 80.0, 58.0, 115.0, 52.0), 17),
-        Scar(pts(88.0, 24.0, 102.0, 28.0, 116.0, 33.0, 128.0, 38.0), 24),
-        Scar(pts(116.0, -24.0, 128.0, -27.0, 140.0, -32.0, 150.0, -35.0), 26)
-    )
 
     private val scaleDetector: ScaleGestureDetector
     private val gestureDetector: GestureDetector
@@ -437,7 +474,9 @@ class FusionMapView(context: Context) : View(context) {
                 stateLabels = acc.map { (fips, a) ->
                     Triple(names[fips] ?: fips, a[0] / a[2], a[1] / a[2])
                 }
+                ScarcityEngine.build(parsed)
                 postInvalidate()
+                post { onScarcityReady?.invoke() }
             } catch (e: Exception) {
                 counties = emptyList()
             }
@@ -586,14 +625,7 @@ class FusionMapView(context: Context) : View(context) {
         return inside
     }
 
-    private fun growth(b: Blob): Double {
-        if (day < b.startDay) return 0.0
-        val span = (31 - b.startDay).coerceAtLeast(1)
-        val f = ((day - b.startDay + 1).toDouble() / (span + 1)).coerceIn(0.0, 1.0)
-        return 0.22 + 0.78 * f
-    }
-
-    private fun blobRadiusDeg(b: Blob): Double = b.maxR * growth(b)
+    private fun blobRadiusDeg(b: Blob): Double = FusionField.radiusDeg(b, day)
 
     private fun blobPath(cxLon: Double, cyLat: Double, rDeg: Double, seed: Double): Path {
         val path = Path()
@@ -637,7 +669,7 @@ class FusionMapView(context: Context) : View(context) {
         canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), oceanPaint)
 
         // Fusion-matter oceans under the land
-        for (b in oceanBlobs) drawBlob(canvas, b, limePaint)
+        for (b in FusionField.oceanBlobs) drawBlob(canvas, b, limePaint)
 
         // graticule every 30 degrees
         var lon = -150.0
@@ -658,16 +690,24 @@ class FusionMapView(context: Context) : View(context) {
             canvas.drawPath(p, countryEdgePaint)
         }
 
-        // US counties appear as you zoom in
-        if (s >= 10f && counties.isNotEmpty()) {
+        // US counties appear as you zoom in; in scarcity-tint mode they are
+        // filled by their state's 0-10 score for the current day
+        if ((s >= 10f || scarcityTint) && counties.isNotEmpty()) {
+            val tintScores = if (scarcityTint && ScarcityEngine.ready)
+                ScarcityEngine.scores(day).associateBy { it.fips } else null
             for (f in counties) {
                 if (!intersects(f, lonR, latR)) continue
-                canvas.drawPath(featurePath(f), countyEdgePaint)
+                val p = featurePath(f)
+                if (tintScores != null) {
+                    countryFillPaint.color = scoreColor(tintScores[f.stateFips]?.score ?: 0.0)
+                    canvas.drawPath(p, countryFillPaint)
+                }
+                if (s >= 10f) canvas.drawPath(p, countyEdgePaint)
             }
         }
 
         // Future zones (lime, ringed)
-        for (b in futureZones) {
+        for (b in FusionField.futureZones) {
             val r = blobRadiusDeg(b); if (r <= 0.0) continue
             val p = blobPath(b.lon, b.lat, r, b.seed)
             canvas.drawPath(p, futurePaint)
@@ -675,12 +715,12 @@ class FusionMapView(context: Context) : View(context) {
         }
 
         // Corrupted zones (lime)
-        for (b in corruptedZones) drawBlob(canvas, b, limePaint)
+        for (b in FusionField.corruptedZones) drawBlob(canvas, b, limePaint)
 
         // Fusion scars: lengthen daily
         scarPaint.strokeWidth = (s * 0.10f).coerceIn(3f, 9f)
         scarGlowPaint.strokeWidth = scarPaint.strokeWidth * 2.4f
-        for (scar in scars) {
+        for (scar in FusionField.scars) {
             if (day < scar.startDay) continue
             val span = (31 - scar.startDay).coerceAtLeast(1)
             val frac = ((day - scar.startDay + 1).toDouble() / (span + 1)).coerceIn(0.0, 1.0)
@@ -775,16 +815,8 @@ class FusionMapView(context: Context) : View(context) {
         }
     }
 
-    private fun isConsumed(lon: Double, lat: Double): Boolean {
-        fun hit(b: Blob): Boolean {
-            val r = blobRadiusDeg(b)
-            if (r <= 0.0) return false
-            val dLon = (lon - b.lon) * kotlin.math.cos(Math.toRadians(b.lat))
-            val dLat = lat - b.lat
-            return dLon * dLon + dLat * dLat <= r * r * 0.8
-        }
-        return corruptedZones.any(::hit) || futureZones.any(::hit) || oceanBlobs.any(::hit)
-    }
+    private fun isConsumed(lon: Double, lat: Double): Boolean =
+        FusionField.isConsumed(lon, lat, day)
 
     private fun oceanName(lon: Double, lat: Double): String = when {
         lat > 66 -> "Arctic Ocean"
@@ -840,6 +872,15 @@ class FusionMapView(context: Context) : View(context) {
         onPlaceTapped?.invoke("🌊 ${oceanName(lon, lat)} — $status")
     }
 
+    private fun scoreColor(score: Double): Int {
+        // 0 green -> 5 amber -> 10 red
+        fun lerp(a: Int, b: Int, f: Double): Int = (a + (b - a) * f).toInt()
+        fun mix(c1: IntArray, c2: IntArray, f: Double): Int =
+            Color.rgb(lerp(c1[0], c2[0], f), lerp(c1[1], c2[1], f), lerp(c1[2], c2[2], f))
+        val green = intArrayOf(62, 124, 67); val amber = intArrayOf(224, 184, 60); val red = intArrayOf(217, 35, 35)
+        return if (score <= 5.0) mix(green, amber, score / 5.0) else mix(amber, red, (score - 5.0) / 5.0)
+    }
+
     private fun drawScaleBar(canvas: Canvas, s: Float) {
         val milesPerDeg = FusionModel.EARTH_CIRCUMFERENCE_MI / 360.0 // 69.17 mi at the equator
         val candidates = doubleArrayOf(5000.0, 2000.0, 1000.0, 500.0, 200.0, 100.0, 50.0, 20.0, 10.0, 5.0)
@@ -884,6 +925,11 @@ class MainActivity : Activity() {
     private lateinit var playButton: Button
     private lateinit var liveButton: Button
     private lateinit var seek: SeekBar
+    private lateinit var scarcityList: ListView
+    private lateinit var tintButton: Button
+    private lateinit var scarcityButton: Button
+    private var showingScarcity = false
+    private var currentScores: List<ScarcityEngine.StateScore> = emptyList()
 
     private val playTick = object : Runnable {
         override fun run() {
@@ -972,8 +1018,27 @@ class MainActivity : Activity() {
 
         mapView = FusionMapView(this)
         mapView.onPlaceTapped = { info -> infoText.text = info }
+        mapView.onScarcityReady = { refreshScarcity() }
         root.addView(
             mapView,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+
+        scarcityList = ListView(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.rgb(8, 26, 12))
+            divider = null
+            setOnItemClickListener { _, _, position, _ ->
+                val sc = currentScores.getOrNull(position) ?: return@setOnItemClickListener
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("State scarcity — October $day")
+                    .setMessage(sc.detail(day))
+                    .setPositiveButton("Close", null)
+                    .show()
+            }
+        }
+        root.addView(
+            scarcityList,
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         )
 
@@ -1031,6 +1096,29 @@ class MainActivity : Activity() {
         zoomOutBtn.setOnClickListener { mapView.zoomBy(1f / 1.5f) }
         resetBtn.setOnClickListener { mapView.resetView() }
         rowOf(listOf(zoomOutBtn, zoomInBtn, resetBtn), listOf(1f, 1f, 1f))
+
+        scarcityButton = ctrlBtn("⚖ Scarcity list")
+        tintButton = ctrlBtn("Scarcity tint: OFF")
+        scarcityButton.setOnClickListener {
+            showingScarcity = !showingScarcity
+            scarcityList.visibility = if (showingScarcity) View.VISIBLE else View.GONE
+            mapView.visibility = if (showingScarcity) View.GONE else View.VISIBLE
+            scarcityButton.text = if (showingScarcity) "🗺 Back to map" else "⚖ Scarcity list"
+            if (showingScarcity) {
+                refreshScarcity()
+                infoText.text = "State scarcity for October $day — worst first. Tap a state for its 7-factor breakdown."
+            } else {
+                infoText.text = "Pinch or use + / − to zoom · drag to pan · double-tap zooms · tap the map: countries → US states → all 3,221 counties → cities"
+            }
+        }
+        tintButton.setOnClickListener {
+            mapView.scarcityTint = !mapView.scarcityTint
+            tintButton.text = if (mapView.scarcityTint) "Scarcity tint: ON" else "Scarcity tint: OFF"
+            if (mapView.scarcityTint) {
+                infoText.text = "Scarcity tint on: US states are coloured by their 0–10 score for October $day (green = stable, red = collapse-tier). Zoom into the US to see counties."
+            }
+        }
+        rowOf(listOf(scarcityButton, tintButton), listOf(1f, 1f))
 
         val prevBtn = ctrlBtn("◀ Day")
         playButton = ctrlBtn("▶ Play 31 days")
@@ -1123,10 +1211,308 @@ class MainActivity : Activity() {
         )
         eventText.text = FusionModel.events[day - 1]
         if (!live) liveText.text = liveLabel()
+        if (::scarcityList.isInitialized) refreshScarcity()
+    }
+
+    private fun tierColor(score: Double): Int = when {
+        score >= 7.5 -> Color.rgb(255, 110, 110)
+        score >= 6.0 -> Color.rgb(255, 170, 80)
+        score >= 4.5 -> Color.rgb(255, 220, 110)
+        score >= 3.0 -> Color.rgb(200, 230, 140)
+        else -> Color.rgb(150, 220, 150)
+    }
+
+    private fun refreshScarcity() {
+        if (!::scarcityList.isInitialized) return
+        if (!ScarcityEngine.ready) {
+            currentScores = emptyList()
+            scarcityList.adapter = ArrayAdapter(
+                this, android.R.layout.simple_list_item_1,
+                listOf("Loading county data… scarcity scores are computed from the real county map.")
+            )
+            return
+        }
+        currentScores = ScarcityEngine.scores(day)
+        val rows = currentScores.map { sc ->
+            val refShort = if (sc.refinery.startsWith("none")) "no refineries" else sc.refinery
+            String.format(
+                "%s — %.1f  %s\ncorridor: %s · refinery: %s · fusion density %.0f%%",
+                sc.name, sc.score, sc.tier(), sc.corridor, refShort, sc.density * 100
+            )
+        }
+        scarcityList.adapter = object : ArrayAdapter<String>(
+            this, android.R.layout.simple_list_item_1, rows
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                val tv = v as TextView
+                val sc = currentScores.getOrNull(position)
+                tv.setTextColor(if (sc != null) tierColor(sc.score) else Color.WHITE)
+                tv.textSize = 14f
+                v.setBackgroundColor(Color.rgb(8, 26, 12))
+                return v
+            }
+        }
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
+}
+
+// --- Scarcity engine ----------------------------------------------------------
+// Per-state 0–10 scarcity score (0 = stable, 10 = collapse-tier), recomputed
+// for the selected day from seven factors:
+//   Fusion_density      sampled share of the state's land inside Fusion Matter
+//   Corridor_access     open / partial / collapsed (density + scar crossings)
+//   Refinery_status     online / isolated / shutdown (real refining states);
+//                       states without refineries inherit national fuel stress
+//   Import_dependency   dimensional-import reliance, as a multiplier
+//   Population_pressure surviving-zone population weight
+//   Agriculture_loss    own farm loss + national agricultural collapse (food)
+//   Fuel_distribution   hazard-zone routing transport multiplier
+// Points: density 3.0 + corridor 1.5 + refinery 1.2 + import 1.0 +
+//         population 1.3 + agriculture 1.2 + fuel routing 0.8  =  10.0 max.
+object ScarcityEngine {
+
+    data class StateScore(
+        val fips: String, val name: String, val score: Double,
+        val density: Double, val corridor: String, val corridorVal: Double,
+        val refinery: String, val refineryVal: Double,
+        val importDep: Double, val importVal: Double,
+        val popPressure: Double, val agLoss: Double, val fuelRouting: Double,
+        val ptsDensity: Double, val ptsCorridor: Double, val ptsRefinery: Double,
+        val ptsImport: Double, val ptsPop: Double, val ptsAg: Double, val ptsFuel: Double
+    ) {
+        fun tier(): String = when {
+            score >= 9.0 -> "COLLAPSE-TIER"
+            score >= 7.5 -> "Critical"
+            score >= 6.0 -> "Severe"
+            score >= 4.5 -> "Pressured"
+            score >= 3.0 -> "Strained"
+            score >= 1.5 -> "Watch"
+            else -> "Stable"
+        }
+
+        fun detail(day: Int): String {
+            fun pc(v: Double) = String.format("%.0f%%", v * 100)
+            return StringBuilder()
+                .append("$name — scarcity ${String.format("%.1f", score)} / 10 (${tier()}) · Oct $day\n")
+                .append("• Fusion density: ${pc(density)} of state consumed  +${String.format("%.1f", ptsDensity)}\n")
+                .append("• Corridor access: $corridor  +${String.format("%.1f", ptsCorridor)}\n")
+                .append("• Refinery status: $refinery  +${String.format("%.1f", ptsRefinery)}\n")
+                .append("• Import dependency: ${pc(importDep)} reliance (×${String.format("%.2f", 0.5 + 0.5 * density)} active)  +${String.format("%.1f", ptsImport)}\n")
+                .append("• Population pressure: ${pc(popPressure)}  +${String.format("%.1f", ptsPop)}\n")
+                .append("• Agriculture loss (food tier): ${pc(agLoss)}  +${String.format("%.1f", ptsAg)}\n")
+                .append("• Fuel distribution / hazard routing: ${pc(fuelRouting)}  +${String.format("%.1f", ptsFuel)}\n")
+                .append("0 = stable · 10 = collapse-tier scarcity")
+                .toString()
+        }
+    }
+
+    private class StateData(
+        val fips: String, val name: String,
+        val samples: List<Pair<Double, Double>>,
+        val scarStartDay: Int
+    )
+
+    // Real-world state data (approximations, normalised where noted)
+    private val POP_M = mapOf( // population, millions (2023-ish)
+        "06" to 39.0, "48" to 30.5, "12" to 22.9, "36" to 19.6, "42" to 13.0, "17" to 12.6,
+        "39" to 11.8, "13" to 11.0, "37" to 10.8, "26" to 10.0, "34" to 9.3, "51" to 8.7,
+        "53" to 7.8, "04" to 7.4, "47" to 7.1, "25" to 7.0, "18" to 6.9, "24" to 6.2,
+        "29" to 6.2, "55" to 5.9, "08" to 5.9, "27" to 5.7, "45" to 5.4, "01" to 5.1,
+        "22" to 4.5, "21" to 4.5, "41" to 4.2, "40" to 4.1, "09" to 3.6, "49" to 3.4,
+        "19" to 3.2, "32" to 3.2, "72" to 3.2, "05" to 3.1, "28" to 2.9, "20" to 2.9,
+        "35" to 2.1, "16" to 2.0, "31" to 2.0, "54" to 1.8, "15" to 1.4, "33" to 1.4,
+        "23" to 1.4, "30" to 1.1, "44" to 1.1, "10" to 1.0, "46" to 0.9, "38" to 0.78,
+        "02" to 0.73, "11" to 0.68, "50" to 0.65, "56" to 0.58
+    )
+    private val REFINERY = mapOf( // refining capacity, normalised (TX = 1.0)
+        "48" to 1.0, "22" to 0.55, "06" to 0.50, "17" to 0.28, "18" to 0.24, "34" to 0.22,
+        "42" to 0.21, "53" to 0.20, "39" to 0.19, "40" to 0.16, "47" to 0.13, "28" to 0.13,
+        "27" to 0.13, "20" to 0.12, "01" to 0.12, "21" to 0.11, "26" to 0.08, "49" to 0.08,
+        "38" to 0.07, "56" to 0.07, "30" to 0.07, "08" to 0.07, "05" to 0.06, "02" to 0.05,
+        "10" to 0.05, "13" to 0.05, "41" to 0.04, "35" to 0.04, "51" to 0.04, "15" to 0.03,
+        "54" to 0.03, "72" to 0.02
+    )
+    private val IMPORT_DEP = mapOf( // dimensional-import reliance 0..1
+        "15" to 0.95, "72" to 0.95, "02" to 0.90, "34" to 0.70, "44" to 0.70, "36" to 0.65,
+        "25" to 0.65, "09" to 0.60, "23" to 0.60, "50" to 0.60, "10" to 0.60, "24" to 0.55,
+        "12" to 0.55, "33" to 0.55, "06" to 0.50, "41" to 0.50, "13" to 0.50, "53" to 0.45,
+        "37" to 0.45, "45" to 0.45, "48" to 0.40, "22" to 0.35
+    )
+    private val AG = mapOf( // farm output, normalised (top producers = ~1.0)
+        "06" to 1.0, "19" to 0.95, "48" to 0.90, "17" to 0.85, "31" to 0.85, "20" to 0.80,
+        "27" to 0.80, "18" to 0.60, "29" to 0.55, "55" to 0.55, "46" to 0.55, "05" to 0.50,
+        "38" to 0.50, "40" to 0.45, "39" to 0.45, "12" to 0.40, "53" to 0.40, "26" to 0.40,
+        "37" to 0.40, "22" to 0.35, "08" to 0.35, "16" to 0.35, "13" to 0.35, "42" to 0.30,
+        "36" to 0.30, "41" to 0.30, "28" to 0.30, "30" to 0.30, "21" to 0.30, "01" to 0.25,
+        "47" to 0.25, "51" to 0.20, "45" to 0.20, "56" to 0.15
+    )
+
+    @Volatile var ready: Boolean = false
+        private set
+    private var states: List<StateData> = emptyList()
+    private var cacheDay: Int = -1
+    private var cache: List<StateScore> = emptyList()
+
+    private fun pipRing(ring: FloatArray, lon: Double, lat: Double): Boolean {
+        var inside = false
+        var j = ring.size - 2
+        var i = 0
+        while (i + 1 < ring.size) {
+            val xi = ring[i].toDouble(); val yi = ring[i + 1].toDouble()
+            val xj = ring[j].toDouble(); val yj = ring[j + 1].toDouble()
+            if ((yi > lat) != (yj > lat)) {
+                val xc = (xj - xi) * (lat - yi) / (yj - yi) + xi
+                if (lon < xc) inside = !inside
+            }
+            j = i; i += 2
+        }
+        return inside
+    }
+
+    private fun pipFeature(f: GeoFeature, lon: Double, lat: Double): Boolean {
+        if (lon < f.minLon || lon > f.maxLon || lat < f.minLat || lat > f.maxLat) return false
+        var inside = false
+        for (ring in f.rings) if (pipRing(ring, lon, lat)) inside = !inside
+        return inside
+    }
+
+    fun build(counties: List<GeoFeature>) {
+        val byState = counties.groupBy { it.stateFips }
+        val built = ArrayList<StateData>()
+        for ((fips, feats) in byState) {
+            val name = STATE_NAMES[fips] ?: continue
+            var minLo = 180.0; var maxLo = -180.0; var minLa = 90.0; var maxLa = -90.0
+            for (f in feats) {
+                if (f.minLon < minLo) minLo = f.minLon; if (f.maxLon > maxLo) maxLo = f.maxLon
+                if (f.minLat < minLa) minLa = f.minLat; if (f.maxLat > maxLa) maxLa = f.maxLat
+            }
+            // Alaska crosses the antimeridian: sample its main mass only
+            if (fips == "02") { minLo = -170.0; maxLo = -130.0; minLa = 51.0; maxLa = 71.5 }
+            val width = maxLo - minLo
+            val steps = when { width > 60 -> 30; width < 4 -> 22; else -> 16 }
+            val samples = ArrayList<Pair<Double, Double>>()
+            for (gx in 0..steps) {
+                for (gy in 0..steps) {
+                    val lo = minLo + (maxLo - minLo) * gx / steps
+                    val la = minLa + (maxLa - minLa) * gy / steps
+                    for (f in feats) {
+                        if (lo < f.minLon || lo > f.maxLon || la < f.minLat || la > f.maxLat) continue
+                        if (pipFeature(f, lo, la)) { samples.add(lo to la); break }
+                    }
+                }
+            }
+            if (samples.isEmpty()) {
+                samples.add(feats[0].cenLon to feats[0].cenLat)
+            }
+            // earliest fusion scar that crosses this state
+            var scarStart = -1
+            for (scar in FusionField.scars) {
+                val hit = scar.pts.any { (lo, la) -> feats.any { pipFeature(it, lo, la) } }
+                if (hit && (scarStart == -1 || scar.startDay < scarStart)) scarStart = scar.startDay
+            }
+            built.add(StateData(fips, name, samples, scarStart))
+        }
+        states = built
+        cacheDay = -1
+        ready = built.isNotEmpty()
+    }
+
+    private fun corridorFor(d: Double, scarStart: Int, day: Int): Pair<String, Double> = when {
+        d >= 0.50 -> "collapsed" to 1.0
+        d >= 0.22 || (scarStart in 1..day && d >= 0.08) -> "partial" to 0.55
+        else -> "open" to 0.0
+    }
+
+    private fun refineryFor(d: Double): Pair<String, Double> = when {
+        d >= 0.50 -> "shutdown" to 1.0
+        d >= 0.28 -> "isolated" to 0.5
+        else -> "online" to 0.0
+    }
+
+    fun scores(day: Int): List<StateScore> {
+        if (!ready) return emptyList()
+        if (day == cacheDay) return cache
+
+        // Density is calibrated to the planet-wide coverage curve, so a state
+        // reads as the share of its land consumed on that day (Oct 1 small,
+        // Oct 31 near-total in the worst zones).
+        val coverageScale = kotlin.math.sqrt(FusionModel.percent(day) / 71.4)
+        fun densityHit(lon: Double, lat: Double): Boolean {
+            fun hit(b: Blob): Boolean {
+                val r = FusionField.radiusDeg(b, day) * coverageScale
+                if (r <= 0.0) return false
+                val dLon = (lon - b.lon) * kotlin.math.cos(Math.toRadians(b.lat))
+                val dLat = lat - b.lat
+                return dLon * dLon + dLat * dLat <= r * r * 0.8
+            }
+            return FusionField.corruptedZones.any(::hit) ||
+                FusionField.futureZones.any(::hit) || FusionField.oceanBlobs.any(::hit)
+        }
+        val densities = HashMap<String, Double>()
+        for (st in states) {
+            var hit = 0
+            for ((lo, la) in st.samples) if (densityHit(lo, la)) hit++
+            densities[st.fips] = if (st.samples.isEmpty()) 0.0 else hit.toDouble() / st.samples.size
+        }
+        // national agriculture collapse + national refinery shutdown level
+        var agNum = 0.0; var agDen = 0.0
+        var refNum = 0.0; var refDen = 0.0
+        for (st in states) {
+            val d = densities[st.fips] ?: 0.0
+            val ag = AG[st.fips] ?: 0.1
+            agNum += ag * d; agDen += ag
+            val ref = REFINERY[st.fips] ?: 0.0
+            if (ref > 0.0) { refNum += ref * refineryFor(d).second; refDen += ref }
+        }
+        val nationalAgLoss = if (agDen > 0) agNum / agDen else 0.0
+        val nationalRefineryStress = if (refDen > 0) refNum / refDen else 0.0
+
+        val out = ArrayList<StateScore>()
+        for (st in states) {
+            val d = densities[st.fips] ?: 0.0
+            val (corridorLabel, corridorVal) = corridorFor(d, st.scarStartDay, day)
+            val refCap = REFINERY[st.fips] ?: 0.0
+            val (refLabel, refVal) = if (refCap > 0.0) {
+                val (l, v) = refineryFor(d); l to v
+            } else {
+                "none — national fuel stress" to nationalRefineryStress * 0.85
+            }
+            val importDep = IMPORT_DEP[st.fips] ?: 0.30
+            val importVal = importDep * (0.5 + 0.5 * d)
+            val pop = POP_M[st.fips] ?: 1.0
+            val popNorm = kotlin.math.ln(pop) / kotlin.math.ln(39.5)
+            val popPressure = (popNorm * (0.4 + 0.6 * d)).coerceIn(0.0, 1.0)
+            val agNorm = AG[st.fips] ?: 0.1
+            val agLoss = (0.6 * nationalAgLoss + 0.4 * d * agNorm).coerceIn(0.0, 1.0)
+            val fuelRouting = ((0.65 * corridorVal + 0.35 * d) * (1.0 + 0.25 * importDep)).coerceIn(0.0, 1.0)
+
+            val ptsD = 3.0 * d
+            val ptsC = 1.5 * corridorVal
+            val ptsR = 1.2 * refVal
+            val ptsI = 1.0 * importVal
+            val ptsP = 1.3 * popPressure
+            val ptsA = 1.2 * agLoss
+            val ptsF = 0.8 * fuelRouting
+            val score = (ptsD + ptsC + ptsR + ptsI + ptsP + ptsA + ptsF).coerceIn(0.0, 10.0)
+            out.add(
+                StateScore(
+                    st.fips, st.name, score, d, corridorLabel, corridorVal,
+                    refLabel, refVal, importDep, importVal, popPressure, agLoss,
+                    fuelRouting, ptsD, ptsC, ptsR, ptsI, ptsP, ptsA, ptsF
+                )
+            )
+        }
+        out.sortByDescending { it.score }
+        cache = out
+        cacheDay = day
+        return out
+    }
+
+    fun scoreFor(fips: String, day: Int): Double =
+        scores(day).firstOrNull { it.fips == fips }?.score ?: 0.0
 }

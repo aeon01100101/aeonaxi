@@ -35,3 +35,18 @@ permanent keystore (`signing/`, cert SHA-256 8626e5ce…) so future updates
 install over the top.
 
 Fan-made, unofficial. FusionFall © Cartoon Network.
+
+## State scarcity scores (v1.2.0)
+Per-state **0–10 scarcity score** (0 = stable, 10 = collapse-tier), recomputed
+for the selected day from seven factors, exactly as specified:
+`Fusion_density` (share of the state's land inside Fusion Matter, sampled on a
+grid over its real county geometry and calibrated to the planet-wide coverage
+curve), `Corridor_access` (open / partial / collapsed — density + fusion-scar
+crossings), `Refinery_status` (online / isolated / shutdown for real refining
+states; other states inherit national fuel stress), `Import_dependency`
+(dimensional-import reliance multiplier), `Population_pressure` (surviving-zone
+population), `Agriculture_loss` (own farm loss + national ag collapse,
+food-tier), `Fuel_distribution` (hazard-zone routing transport multiplier).
+Points: 3.0 + 1.5 + 1.2 + 1.0 + 1.3 + 1.2 + 0.8 = 10. In-app: **⚖ Scarcity
+list** (worst-first, tap a state for the full 7-factor breakdown) and
+**Scarcity tint** (states coloured green→red by score on the map).
