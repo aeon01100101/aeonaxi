@@ -1,7 +1,19 @@
-# AeonAxi v1.0.0 — Fusion Matter Earth Map
+# AeonAxi — Fusion Matter Earth Map
 
 Android app (`com.aeonaxi.app`, min Android 8.0) showing **FusionFall's Fusion Matter**
 (Planet Fusion's lime-green goo) consuming Earth over October 1–31.
+
+## Detail (v1.1.0)
+- **Real borders:** 180 countries (Natural Earth geometry via world.geo.json),
+  drawn and labelled as you zoom.
+- **All 3,221 US counties** (Census FIPS GeoJSON) appear on deep zoom, with
+  state labels at medium zoom and county names at deep zoom.
+- **150+ cities** worldwide with dots and zoom-scaled name labels.
+- **Zoom / pan:** pinch, double-tap, + / − buttons, drag to pan, ⌂ resets to
+  the whole Earth. The scale bar rescales with zoom (24,901-mile basis).
+- **Tap to identify:** city, county + state, country, or ocean — with its
+  Fusion Matter status for the current day.
+- Map data lives in `app/src/main/assets/`; original downloads in `data-src/`.
 
 - **Normal land / ocean** = normal colours
 - **Lime green (#3DFF1A)** = corrupted zones, fusion-matter oceans, fusion-matter
